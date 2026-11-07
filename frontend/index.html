@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mines</title>
+    <style>
+      /* ADI design tokens — a snapshot of design/tokens.css (adi-family/mono) taken when this
+         template repo was last updated. This dashboard is created by running a shell command,
+         not by the platform's own build, so there is no build-time splice to keep this current —
+         copy a newer tokens.css in by hand if you want to follow the palette as it moves on.
+         Everything below is design/DESIGN.md: surfaces and hairlines, sentence case, mono for
+         machine strings only, nothing raised and nothing that moves on its own. */
+      :root {
+        --bg-side:   #101010;
+        --bg:        #161616;
+        --bg-hover:  #1B1B1B;
+        --bg-raise:  #1E1E1E;
+        --bg-active: #232323;
+        --line:        rgba(255,255,255,.07);
+        --line-strong: rgba(255,255,255,.13);
+        --ink:   #ECEAE6;
+        --ink-2: #A9A6A0;
+        --ink-3: #6F6C67;
+        --code:  #D6D3CD;
+        --accent:       #E8532A;
+        --accent-hover: #F05F35;
+        --ok:   #4CB77A;
+        --warn: #E0A84B;
+        --err:  #E25C5C;
+        --sans:    "Geist", system-ui, sans-serif;
+        --mono:    "Geist Mono", ui-monospace, monospace;
+        --r-sm: 4px;
+        --r:    6px;
+        --r-lg: 10px;
+        --r-pill: 999px;
+        --fs-label:   12px;
+        --fs-small:   13px;
+        --fs-ui-sm:   13.5px;
+        --fs-ui:      14px;
+        --fs-section: 16px;
+        --fs-title:   22px;
+        color-scheme: dark;
+      }
+      .light, [data-theme="light"] {
+        --bg-side: #F4F3F0; --bg: #FBFAF8; --bg-hover: #F1EFEB; --bg-raise: #FFFFFF; --bg-active: #EBE8E2;
+        --line: rgba(0,0,0,.07); --line-strong: rgba(0,0,0,.13);
+        --ink: #17150F; --ink-2: #55514A; --ink-3: #8C8780; --code: #3D3A34;
+        --accent: #D6431C; --accent-hover: #C23A15;
+        color-scheme: light;
+      }
+      * { box-sizing: border-box; }
+      html, body { background: var(--bg); }
+      body { margin: 0; font-family: var(--sans); }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 48px;
+        padding: 0 24px;
+        background: var(--bg-side);
+        border-bottom: 1px solid var(--line);
+      }
+      h1 { font-size: 15px; font-weight: 600; margin: 0; color: var(--ink); }
+      .meta { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+      .meta code { color: var(--ink-2); }
+      .dot {
+        display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+        background: var(--ok); margin-right: 7px; vertical-align: 1px;
+      }
+      .dot.off { background: var(--err); }
+      main {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 16px;
+        padding: 24px;
+        align-items: start;
+      }
+      /* One module is one detachable thing, which is what a card is for: a hairline and the
+         large radius, no fill, no shadow. */
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        padding: 14px 16px 16px;
+        overflow-x: auto;
+      }
+      .panel > h2 {
+        margin: 0 0 12px;
+        font-size: var(--fs-section);
+        font-weight: 600;
+        color: var(--ink);
+      }
+      /* A module that failed to mount: the title says so in the error colour, and that is all. */
+      .panel--failed > h2 { color: var(--err); }
+      .panel--failed > code { display: block; white-space: pre-wrap; word-break: break-word; }
+      .empty { padding: 24px 0; color: var(--ink-3); font-size: var(--fs-small); }
+      a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
+      a:hover { color: var(--ink); }
+      svg.ic { width: 16px; height: 16px; display: block; }
+
+      /* The adi-agent editor: a floating toolbar and the drawer it opens. The drawer is docked
+         to the right and the page reflows beside it — the script sets body's padding, because a
+         fixed drawer is out of flow and would otherwise cover the panels you are editing. */
+      .adi-edit {
+        position: fixed; right: 16px; bottom: 16px; z-index: 2147483646;
+        display: flex; gap: 2px; padding: 3px; border-radius: var(--r-pill);
+        border: 1px solid var(--line-strong); background: var(--bg-raise);
+      }
+      .adi-edit__btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        border: 0; border-radius: var(--r-pill); padding: 5px 10px; cursor: pointer;
+        background: none; color: var(--ink-2);
+        font: 500 12.5px/1.2 var(--sans);
+      }
+      .adi-edit__btn:hover { background: var(--bg-hover); color: var(--ink); }
+      .adi-edit__btn[aria-pressed="true"], .adi-edit__btn[aria-expanded="true"] {
+        background: var(--bg-active); color: var(--ink);
+      }
+
+      .adi-editor {
+        position: fixed; inset: 0 0 0 auto; z-index: 2147483647;
+        display: flex; flex-direction: column;
+        width: var(--editor-w, 480px); max-width: 100vw;
+        background: var(--bg-side); border-left: 1px solid var(--line);
+      }
+      /* `display: flex` above outranks the UA's `[hidden] { display: none }`, so restate it. */
+      .adi-editor[hidden] { display: none; }
+      /* Controls only — the embedded page brands itself, so a title here would say it twice. */
+      .adi-editor__head {
+        display: flex; align-items: center; justify-content: flex-end; gap: 2px;
+        height: 48px; padding: 0 8px; border-bottom: 1px solid var(--line);
+      }
+      .adi-editor__btn {
+        display: inline-grid; place-items: center; width: 28px; height: 28px;
+        border: 0; background: none; color: var(--ink-3); cursor: pointer;
+        border-radius: var(--r);
+      }
+      .adi-editor__btn:hover { background: var(--bg-hover); color: var(--ink); }
+      .adi-editor__frame { flex: 1; width: 100%; border: 0; }
+      .adi-editor__grip { position: absolute; inset: 0 auto 0 0; width: 6px; cursor: ew-resize; }
+
+      /* The picker's highlight: one box moved around the page, rather than an outline drawn on
+         the hovered element itself — which would change that element's own metrics, and so move
+         the thing being measured. It never takes the pointer, so the hit test underneath it
+         keeps returning the page. Ink, not the accent: a hover is not a selection. */
+      .adi-pick {
+        position: fixed; z-index: 2147483645; pointer-events: none;
+        border: 1px solid var(--ink-2); border-radius: var(--r-sm);
+        background: var(--chip, rgba(255,255,255,.07));
+      }
+      .adi-pick__tag {
+        position: absolute; left: 0; bottom: 100%; margin-bottom: 3px; white-space: nowrap;
+        padding: 2px 6px; border-radius: var(--r-sm);
+        background: var(--ink); color: var(--bg);
+        font: 11px/1.3 var(--mono);
+      }
+      /* Against the top of the viewport the label has nowhere above to go, so it drops inside. */
+      .adi-pick--low .adi-pick__tag { bottom: auto; top: 100%; margin: 3px 0 0; }
+      body.adi-picking, body.adi-picking * { cursor: crosshair !important; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Mines</h1>
+      <span class="meta" id="status"></span>
+    </header>
+    <main id="app"></main>
+
+    <script type="module">
+      // Runtime config injected by frontend/index.ts: which dashboard this is and which modules
+      // to mount. No address, by design — see below.
+      const config = __ADI_CONFIG__;
+
+      // One dashboard is one origin. The backend is a sibling hive service claiming `/api` on
+      // this very host, so its base is a *relative* path and every call the page makes is
+      // same-origin. Nothing here may ever become an absolute URL: this page is served under its
+      // local `.adi` name, under `<label>.<node>.n.adi` when someone views it over the mesh from
+      // another machine, and under a real domain later — an absolute URL would pin it to one of
+      // those, and a loopback address would pin it to whichever machine the *browser* is on.
+      const api = "/api";
+
+      // adi-agent editor launcher — a floating button that docks the control panel's embedded
+      // adi-agent chat beside this page, scoped to this dashboard, so you can edit its .ts files
+      // by chatting with it and watch the panels hot-reload as it goes.
+      //
+      // The host is derived from where the page came from rather than hardcoded: on `nosh.adi`
+      // that is `app.adi`, and viewed over the mesh on `nosh.laptop-b.n.adi` it is
+      // `app.laptop-b.n.adi` — that node's panel, not the viewer's. Opened by port there is no
+      // name to derive from, and then the local panel is the only sensible guess.
+      (() => {
+        const host = location.hostname.endsWith(".adi")
+          ? location.hostname.replace(/^[^.]+/, "app")
+          : "app.adi";
+        const src =
+          "//" + host + "/embed/dashboard-agent?dashboard=" +
+          encodeURIComponent(config.dashboard);
+
+        const WIDTH_KEY = "adi.editor.width";
+        const MIN_WIDTH = 320;
+        const MIN_PAGE = 360;
+        let width = Math.max(MIN_WIDTH, Number(localStorage.getItem(WIDTH_KEY)) || 480);
+        let open = false;
+
+        const bar = document.createElement("div");
+        bar.className = "adi-edit";
+        bar.innerHTML =
+          `<button class="adi-edit__btn" type="button" data-pick aria-pressed="false"` +
+          ` title="Point at something and tell the agent about it"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>Pick</button>` +
+          `<button class="adi-edit__btn" type="button" data-open aria-expanded="false"` +
+          ` title="Edit this dashboard with adi-agent"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>Edit</button>`;
+        const pickBtn = bar.querySelector("[data-pick]");
+        const openBtn = bar.querySelector("[data-open]");
+
+        const drawer = document.createElement("aside");
+        drawer.className = "adi-editor";
+        drawer.hidden = true;
+        drawer.setAttribute("aria-label", "adi-agent editor");
+        drawer.innerHTML =
+          `<div class="adi-editor__grip" title="Drag to resize"></div>` +
+          `<header class="adi-editor__head">` +
+            `<button class="adi-editor__btn" type="button" data-pop` +
+            ` title="Open in a separate window" aria-label="Open in a separate window"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg></button>` +
+            `<button class="adi-editor__btn" type="button" data-close` +
+            ` title="Close" aria-label="Close the editor"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>` +
+          `</header>` +
+          `<iframe class="adi-editor__frame" title="adi-agent"></iframe>`;
+
+        const frame = drawer.querySelector("iframe");
+        const grip = drawer.querySelector(".adi-editor__grip");
+
+        function layout() {
+          const w = Math.min(width, window.innerWidth);
+          const beside = open && window.innerWidth - w >= MIN_PAGE;
+          drawer.style.setProperty("--editor-w", w + "px");
+          document.body.style.paddingRight = beside ? w + "px" : "";
+          bar.style.right = (beside ? w + 14 : 14) + "px";
+          bar.hidden = open && !beside;
+        }
+
+        function toggle(next) {
+          open = next;
+          if (open && !frame.src) frame.src = src;
+          drawer.hidden = !open;
+          openBtn.setAttribute("aria-expanded", String(open));
+          layout();
+        }
+
+        openBtn.addEventListener("click", () => toggle(!open));
+        drawer.querySelector("[data-close]").addEventListener("click", () => toggle(false));
+        drawer.querySelector("[data-pop]").addEventListener("click", () => {
+          window.open(src, "adi-dashboard-agent", "width=480,height=760");
+          toggle(false);
+        });
+        addEventListener("resize", layout);
+
+        grip.addEventListener("pointerdown", (ev) => {
+          ev.preventDefault();
+          grip.setPointerCapture(ev.pointerId);
+          const fromX = ev.clientX;
+          const fromWidth = width;
+          frame.style.pointerEvents = "none";
+          const move = (e) => {
+            width = Math.min(
+              window.innerWidth,
+              Math.max(MIN_WIDTH, fromWidth + fromX - e.clientX),
+            );
+            layout();
+          };
+          const done = () => {
+            grip.removeEventListener("pointermove", move);
+            grip.removeEventListener("pointerup", done);
+            frame.style.pointerEvents = "";
+            localStorage.setItem(WIDTH_KEY, String(width));
+          };
+          grip.addEventListener("pointermove", move);
+          grip.addEventListener("pointerup", done);
+        });
+
+        let picking = false;
+        let hovered = null;
+
+        const box = document.createElement("div");
+        box.className = "adi-pick";
+        box.hidden = true;
+        box.innerHTML = `<span class="adi-pick__tag"></span>`;
+        const label = box.querySelector(".adi-pick__tag");
+
+        function owner(el) {
+          const panel = el.closest("[data-adi-module]");
+          return panel && { id: panel.dataset.adiModule, title: panel.dataset.adiTitle, panel };
+        }
+
+        function under(ev) {
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          return el && !el.closest(".adi-editor, .adi-edit") ? el : null;
+        }
+
+        function highlight(el) {
+          hovered = el;
+          box.hidden = !el;
+          if (!el) return;
+          const r = el.getBoundingClientRect();
+          box.style.left = r.left + "px";
+          box.style.top = r.top + "px";
+          box.style.width = r.width + "px";
+          box.style.height = r.height + "px";
+          box.classList.toggle("adi-pick--low", r.top < 22);
+          const own = owner(el);
+          label.textContent =
+            (own ? own.id + ".ts · " : "") + "<" + el.tagName.toLowerCase() + ">";
+        }
+
+        function setPicking(on) {
+          picking = on;
+          document.body.classList.toggle("adi-picking", on);
+          pickBtn.setAttribute("aria-pressed", String(on));
+          if (!on) highlight(null);
+        }
+
+        function pathTo(root, el) {
+          const parts = [];
+          for (let n = el; n && n !== root; n = n.parentElement) {
+            const tag = n.tagName.toLowerCase();
+            const twins = [...(n.parentElement?.children ?? [])]
+              .filter((c) => c.tagName === n.tagName);
+            parts.unshift(
+              twins.length > 1 ? `${tag}:nth-of-type(${twins.indexOf(n) + 1})` : tag,
+            );
+          }
+          return parts.join(" > ");
+        }
+
+        function describe(el) {
+          const own = owner(el);
+          const classes = typeof el.className === "string" ? el.className.trim() : "";
+          const text = (el.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
+          const lines = [
+            own
+              ? `- file: frontend/modules/${own.id}.ts`
+              : "- file: frontend/index.html (the shell itself — not a module)",
+          ];
+          if (own?.title) lines.push(`- panel: ${JSON.stringify(own.title)}`);
+          lines.push(
+            `- element: <${el.tagName.toLowerCase()}>` +
+              (classes ? ` class="${classes}"` : ""),
+          );
+          const path = pathTo(own ? own.panel : document.body, el);
+          if (path) lines.push(`- where: ${path}`);
+          if (text) lines.push(`- text: ${JSON.stringify(text)}`);
+          return "I picked this element in the dashboard UI:\n" + lines.join("\n") + "\n\n";
+        }
+
+        let listening = false;
+        const queued = [];
+
+        function post(message) {
+          frame.contentWindow.postMessage(message, location.protocol + "//" + host);
+        }
+
+        function report(text) {
+          const message = { type: "adi.dashboard.pick", dashboard: config.dashboard, text };
+          if (listening) post(message);
+          else queued.push(message);
+        }
+
+        addEventListener("message", (ev) => {
+          if (ev.source !== frame.contentWindow || ev.data?.type !== "adi.dashboard.ready") {
+            return;
+          }
+          listening = true;
+          queued.splice(0).forEach(post);
+        });
+
+        pickBtn.addEventListener("click", () => setPicking(!picking));
+        addEventListener("pointermove", (ev) => picking && highlight(under(ev)), true);
+        addEventListener("scroll", () => picking && hovered && highlight(hovered), true);
+        addEventListener("click", (ev) => {
+          if (!picking) return;
+          const el = under(ev);
+          ev.preventDefault();
+          ev.stopPropagation();
+          setPicking(false);
+          if (!el) return;
+          toggle(true);
+          report(describe(el));
+        }, true);
+        addEventListener("keydown", (ev) => {
+          if (ev.key !== "Escape") return;
+          if (picking) setPicking(false);
+          else if (open) toggle(false);
+        });
+
+        document.body.append(bar, drawer, box);
+        layout();
+      })();
+
+      const app = document.getElementById("app");
+      const status = document.getElementById("status");
+
+      /**
+       * What every module receives. `api.get`/`api.post` are pre-bound to the backend, so a
+       * module never has to know — or be able to state — where it lives; `panel()` gives it a
+       * titled card to render into.
+       */
+      function context(id) {
+        return {
+          dashboard: config.dashboard,
+          api: {
+            base: api,
+            async get(path) {
+              const r = await fetch(api + path);
+              if (!r.ok) throw new Error(`${path}: ${r.status}`);
+              return r.json();
+            },
+            async post(path, body) {
+              const r = await fetch(api + path, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              if (!r.ok) throw new Error(`${path}: ${r.status}`);
+              return r.json();
+            },
+          },
+          panel(title) {
+            const el = document.createElement("section");
+            el.className = "panel";
+            el.dataset.adiModule = id;
+            if (title) el.dataset.adiTitle = title;
+            el.innerHTML = `<h2></h2>`;
+            el.querySelector("h2").textContent = title ?? id;
+            app.append(el);
+            const body = document.createElement("div");
+            el.append(body);
+            return body;
+          },
+        };
+      }
+
+      async function boot() {
+        let online = false;
+        try {
+          const r = await fetch(api + "/health");
+          online = r.ok;
+        } catch {}
+        const n = config.modules.length;
+        status.innerHTML = `<span class="dot ${online ? "" : "off"}"></span>` +
+          `<code>${config.dashboard.slice(0, 8)}</code> · ${n} ${n === 1 ? "module" : "modules"} · ` +
+          `backend ${online ? "up" : "down"}`;
+
+        if (!config.modules.length) {
+          app.innerHTML =
+            `<div class="empty">No modules yet. Drop a <code>.ts</code> file into ` +
+            `<code>frontend/modules/</code> and reload.</div>`;
+          return;
+        }
+
+        for (const id of config.modules) {
+          try {
+            const mod = await import(`/modules/${id}.js`);
+            const mount = mod.default ?? mod.mount;
+            if (typeof mount !== "function") {
+              throw new Error("module has no default export function");
+            }
+            await mount(context(id));
+          } catch (err) {
+            const el = document.createElement("section");
+            el.className = "panel panel--failed";
+            el.dataset.adiModule = id;
+            el.innerHTML = `<h2></h2><code></code>`;
+            el.querySelector("h2").textContent = `${id} — failed`;
+            el.querySelector("code").textContent = String(err);
+            app.append(el);
+          }
+        }
+      }
+
+      boot();
+    </script>
+  </body>
+</html>
